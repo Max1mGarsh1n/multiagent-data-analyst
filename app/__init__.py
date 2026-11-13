@@ -1,0 +1,1 @@
+"""Multiagent data analysis application."""
