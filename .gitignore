@@ -1,0 +1,36 @@
+# Project notes and documentation
+*.md
+
+# Local Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Editor settings and logs
+.idea/
+.vscode/
+*.log
+
+# Downloaded databases and model weights
+demo-*.sql
+*.sql.gz
+*.zip
+*.dump
+*.backup
+*.gguf
+*.safetensors
+
+# Python build output
+build/
+dist/
+*.egg-info/
