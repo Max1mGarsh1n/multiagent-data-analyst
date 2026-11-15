@@ -15,11 +15,12 @@ def main() -> int:
     parser.add_argument("--top-k", type=int, default=8)
     parser.add_argument("--format", choices=("prompt", "json"), default="prompt")
     parser.add_argument("--include-views", action="store_true")
+    parser.add_argument("--no-profiles", action="store_true", help="Прочитать только метаданные без выборок строк")
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
     try:
-        context = retrieve_schema(args.question, args.source, args.top_k, include_views=args.include_views)
+        context = retrieve_schema(args.question, args.source, args.top_k, include_views=args.include_views, include_profiles=not args.no_profiles)
     except (ValueError, CatalogError) as error:
         print(str(error), file=sys.stderr)
         return 1

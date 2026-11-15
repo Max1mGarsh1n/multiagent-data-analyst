@@ -29,6 +29,12 @@ class TestBackend:
         except (CatalogError, ValueError) as error:
             raise BackendError(str(error)) from None
 
+    def check_source(self, source_id: str) -> None:
+        try:
+            get_catalog(source_id, include_profiles=False)
+        except (CatalogError, ValueError) as error:
+            raise BackendError(str(error)) from None
+
     def chat(self, question: str, source_id: str, session_id: str) -> ChatResponse:
         if source_id != "demo":
             raise BackendError("Неизвестный источник.")
