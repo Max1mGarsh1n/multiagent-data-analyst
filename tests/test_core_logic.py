@@ -41,6 +41,7 @@ class TestJsonUtils(unittest.TestCase):
 
     def test_strip_thinking_preserves_plain_answer(self) -> None:
         self.assertEqual(strip_thinking("<think>abc</think>Всего 42 рейса."), "Всего 42 рейса.")
+        self.assertEqual(strip_thinking("<thought>abc</thought>Всего 42 рейса."), "Всего 42 рейса.")
 
 
 class TestSqlGuard(unittest.TestCase):

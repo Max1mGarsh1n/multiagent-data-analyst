@@ -1,7 +1,7 @@
 import json
 import re
 
-THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", flags=re.DOTALL | re.IGNORECASE)
+THINK_BLOCK_RE = re.compile(r"<(?:think|thought)>.*?</(?:think|thought)>", flags=re.DOTALL | re.IGNORECASE)
 FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", flags=re.IGNORECASE)
 
 
