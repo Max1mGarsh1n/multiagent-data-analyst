@@ -4,3 +4,8 @@ pydantic==2.14.3
 streamlit==1.67.0
 torch==2.15.0
 sentence-transformers==6.3.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+openai>=1.60.0
+sqlglot>=26.0.0
+python-dotenv>=1.0.1

@@ -32,11 +32,29 @@ def source_url() -> URL:
         raise ValueError("Некорректное подключение. Проверь SOURCE_DATABASE_URL или POSTGRES_PORT.") from None
 
 
+def source_schema_name() -> str:
+    """Resolve the target PostgreSQL schema name from environment variables."""
+    return os.getenv("SOURCE_SCHEMA", "bookings").strip() or "bookings"
+
+
+def resolve_top_k(top_k: int | None = None, *, default: int = 8) -> int:
+    """Resolve top_k from explicit value, RAG_TOP_K env var, or default."""
+    if top_k is not None:
+        return top_k
+    raw = os.getenv("RAG_TOP_K")
+    if raw is not None and raw.strip():
+        try:
+            return int(raw)
+        except ValueError:
+            raise ValueError("RAG_TOP_K должен быть целым числом.") from None
+    return default
+
+
 def get_catalog(source_id: str, *, include_views: bool = False, include_profiles: bool = True) -> list[TableDoc]:
     """Return the catalog of the configured demo source."""
     if source_id != "demo":
         raise ValueError("Неизвестный источник. В v0 доступен source_id='demo'.")
-    return read_schema(source_url(), os.getenv("SOURCE_SCHEMA", "bookings"), include_views=include_views, include_profiles=include_profiles)
+    return read_schema(source_url(), source_schema_name(), include_views=include_views, include_profiles=include_profiles)
 
 
 def retrieve_schema(question: str, source_id: str, top_k: int = 8, *, include_views: bool = False, include_profiles: bool = True) -> SchemaContext:
@@ -48,7 +66,7 @@ def retrieve_schema(question: str, source_id: str, top_k: int = 8, *, include_vi
     if source_id != "demo":
         raise ValueError("Неизвестный источник. В v1 доступен source_id='demo'.")
     from app.rag.indexer import IndexError, search_catalog, source_fingerprint
-    selected, catalog = search_catalog(source_id, question, source_fingerprint(source_url(), os.getenv("SOURCE_SCHEMA", "bookings")), top_k, include_views=include_views)
+    selected, catalog = search_catalog(source_id, question, source_fingerprint(source_url(), source_schema_name()), top_k, include_views=include_views)
     if not include_views:
         selected = [table for table in selected if table.kind == "table"]
         catalog = [table for table in catalog if table.kind == "table"]
