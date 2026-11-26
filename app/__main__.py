@@ -10,7 +10,7 @@ except ImportError:  # pragma: no cover
 
 from app.connectors.postgres import CatalogError
 from app.rag.indexer import IndexError
-from app.rag.retriever import retrieve_schema
+from app.rag.retriever import resolve_top_k, retrieve_schema
 
 
 def main() -> int:
@@ -49,14 +49,14 @@ def main() -> int:
         if args.ask:
             from app.agents.sql_agent import answer_question
 
-            response = answer_question(args.question, args.source, top_k=args.top_k)
+            response = answer_question(args.question, args.source, top_k=resolve_top_k(args.top_k))
             output = response.model_dump_json(indent=2) if args.format == "json" else (
                 f"{response.answer}\n\nSQL:\n{response.sql or '-'}"
             )
             print(output)
             return 0
 
-        effective_top_k = args.top_k if args.top_k is not None else 8
+        effective_top_k = resolve_top_k(args.top_k)
         context = retrieve_schema(
             args.question,
             args.source,

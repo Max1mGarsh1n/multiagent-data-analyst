@@ -15,7 +15,7 @@ from app.contracts.chat import QueryResult
 from app.contracts.schema import ColumnDoc, SchemaContext, TableDoc
 from app.llm.json_utils import extract_json_object, strip_thinking
 from app.rag.indexer import IndexError as RagIndexError
-from app.rag.retriever import source_schema_name
+from app.rag.retriever import resolve_top_k, source_schema_name
 
 
 class TestJsonUtils(unittest.TestCase):
@@ -223,6 +223,83 @@ class TestSqlAgentIntegration(unittest.TestCase):
             resp = client.post("/chat", json={"question": "Сколько рейсов?", "source_id": "demo", "session_id": "s1"})
         self.assertEqual(resp.status_code, 503)
         self.assertIn("Индекс не найден", resp.json()["detail"])
+
+    def test_resolve_top_k_precedence(self) -> None:
+        with patch.dict(os.environ, {"RAG_TOP_K": "3"}):
+            self.assertEqual(resolve_top_k(5), 5)
+            self.assertEqual(resolve_top_k(None), 3)
+        with patch.dict(os.environ, {"RAG_TOP_K": "  "}):
+            self.assertEqual(resolve_top_k(None), 8)
+        with patch.dict(os.environ, {"RAG_TOP_K": "abc"}):
+            with self.assertRaises(ValueError):
+                resolve_top_k(None)
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(resolve_top_k(None), 8)
+            self.assertEqual(resolve_top_k(4), 4)
+
+    def test_cli_uses_same_top_k_precedence_with_and_without_ask(self) -> None:
+        from app.__main__ import main
+        from app.contracts.chat import ChatResponse
+
+        schema_ctx = self._sample_schema_context()
+        chat_resp = ChatResponse(answer="ok", sql="SELECT 1")
+
+        # 1. Explicit --top-k overrides RAG_TOP_K in both modes
+        with (
+            patch.dict(os.environ, {"RAG_TOP_K": "3"}),
+            patch("app.__main__.retrieve_schema", return_value=schema_ctx) as mock_retrieve,
+            patch("sys.argv", ["app", "Сколько рейсов?", "--top-k", "5", "--no-profiles"]),
+            patch("builtins.print"),
+        ):
+            self.assertEqual(main(), 0)
+            self.assertEqual(mock_retrieve.call_args.args[2], 5)
+
+        with (
+            patch.dict(os.environ, {"RAG_TOP_K": "3"}),
+            patch("app.agents.sql_agent.answer_question", return_value=chat_resp) as mock_ask,
+            patch("sys.argv", ["app", "Сколько рейсов?", "--top-k", "5", "--ask"]),
+            patch("builtins.print"),
+        ):
+            self.assertEqual(main(), 0)
+            self.assertEqual(mock_ask.call_args.kwargs["top_k"], 5)
+
+        # 2. RAG_TOP_K applies when --top-k is omitted in both modes
+        with (
+            patch.dict(os.environ, {"RAG_TOP_K": "3"}),
+            patch("app.__main__.retrieve_schema", return_value=schema_ctx) as mock_retrieve,
+            patch("sys.argv", ["app", "Сколько рейсов?", "--no-profiles"]),
+            patch("builtins.print"),
+        ):
+            self.assertEqual(main(), 0)
+            self.assertEqual(mock_retrieve.call_args.args[2], 3)
+
+        with (
+            patch.dict(os.environ, {"RAG_TOP_K": "3"}),
+            patch("app.agents.sql_agent.answer_question", return_value=chat_resp) as mock_ask,
+            patch("sys.argv", ["app", "Сколько рейсов?", "--ask"]),
+            patch("builtins.print"),
+        ):
+            self.assertEqual(main(), 0)
+            self.assertEqual(mock_ask.call_args.kwargs["top_k"], 3)
+
+        # 3. Default 8 applies when both --top-k and RAG_TOP_K are unset
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("app.__main__.retrieve_schema", return_value=schema_ctx) as mock_retrieve,
+            patch("sys.argv", ["app", "Сколько рейсов?", "--no-profiles"]),
+            patch("builtins.print"),
+        ):
+            self.assertEqual(main(), 0)
+            self.assertEqual(mock_retrieve.call_args.args[2], 8)
+
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("app.agents.sql_agent.answer_question", return_value=chat_resp) as mock_ask,
+            patch("sys.argv", ["app", "Сколько рейсов?", "--ask"]),
+            patch("builtins.print"),
+        ):
+            self.assertEqual(main(), 0)
+            self.assertEqual(mock_ask.call_args.kwargs["top_k"], 8)
 
 
 if __name__ == "__main__":

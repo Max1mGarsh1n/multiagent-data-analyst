@@ -37,6 +37,19 @@ def source_schema_name() -> str:
     return os.getenv("SOURCE_SCHEMA", "bookings").strip() or "bookings"
 
 
+def resolve_top_k(top_k: int | None = None, *, default: int = 8) -> int:
+    """Resolve top_k from explicit value, RAG_TOP_K env var, or default."""
+    if top_k is not None:
+        return top_k
+    raw = os.getenv("RAG_TOP_K")
+    if raw is not None and raw.strip():
+        try:
+            return int(raw)
+        except ValueError:
+            raise ValueError("RAG_TOP_K должен быть целым числом.") from None
+    return default
+
+
 def get_catalog(source_id: str, *, include_views: bool = False, include_profiles: bool = True) -> list[TableDoc]:
     """Return the catalog of the configured demo source."""
     if source_id != "demo":

@@ -9,7 +9,7 @@ from app.connectors.sql_runner import SQLExecutionError, execute_readonly_sql
 from app.contracts.analysis import AnalysisResult
 from app.contracts.chat import ChatResponse, QueryResult
 from app.llm.client import LLMError, LocalLLMClient
-from app.rag.retriever import retrieve_schema, source_schema_name, source_url
+from app.rag.retriever import resolve_top_k, retrieve_schema, source_schema_name, source_url
 
 AnalyzerFn = Callable[[str, QueryResult], AnalysisResult]
 
@@ -110,7 +110,7 @@ def answer_question(
     max_retries: int | None = None,
 ) -> ChatResponse:
     """Run Schema-RAG -> SQL generation -> read-only execution (with self-correction) -> analysis."""
-    effective_top_k = top_k if top_k is not None else int(os.getenv("RAG_TOP_K", "8"))
+    effective_top_k = resolve_top_k(top_k)
     retries = max_retries if max_retries is not None else int(os.getenv("SQL_MAX_RETRIES", "2"))
 
     schema_ctx = retrieve_schema(question, source_id, top_k=effective_top_k)
