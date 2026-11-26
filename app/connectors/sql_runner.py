@@ -53,10 +53,10 @@ def execute_readonly_sql(
     """Validate and run a single read-only SELECT query inside an isolated transaction."""
     safe_sql = validate_readonly_sql(sql)
     limit = max_rows if max_rows is not None else int(os.getenv("SQL_MAX_ROWS", "200"))
-    if limit < 1:
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
         raise ValueError("max_rows должен быть положительным целым числом.")
 
-    wrapped_sql = f"SELECT * FROM ({safe_sql}) AS _agent_query LIMIT :limit"
+    wrapped_sql = f"SELECT * FROM (\n{safe_sql}\n) AS _agent_query LIMIT {limit + 1}"
     engine = create_engine(database_url, connect_args={"connect_timeout": 5}, hide_parameters=True)
     started = perf_counter()
 
@@ -75,7 +75,8 @@ def execute_readonly_sql(
                 else:
                     connection.execute(text("SET LOCAL search_path = pg_catalog"))
 
-                result = connection.execute(text(wrapped_sql), {"limit": limit + 1})
+                # Execute via driver SQL with no_parameters=True so literals like ':category' or '%' stay intact.
+                result = connection.execution_options(no_parameters=True).exec_driver_sql(wrapped_sql)
                 columns = list(result.keys())
                 fetched = result.fetchmany(limit + 1)
 

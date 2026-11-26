@@ -16,6 +16,7 @@ from app.connectors.postgres import CatalogError
 from app.contracts.chat import ChatResponse, SourceInfo
 from app.contracts.schema import TableDoc
 from app.llm.client import LLMSettings
+from app.rag.indexer import IndexError as RagIndexError
 from app.rag.retriever import get_catalog
 
 
@@ -68,6 +69,8 @@ def chat(request: ChatRequest) -> ChatResponse:
         response = answer_question(question, request.source_id, history=history)
     except (ValueError, CatalogError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from None
+    except RagIndexError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from None
 
     with _SESSION_LOCK:
         session_history = _SESSIONS[request.session_id]

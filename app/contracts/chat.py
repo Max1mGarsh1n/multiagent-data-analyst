@@ -2,6 +2,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.contracts.analysis import AnalysisResult
+
 
 class SourceInfo(BaseModel):
     id: str = Field(min_length=1)
@@ -28,3 +30,4 @@ class ChatResponse(BaseModel):
     answer: str
     sql: str | None = None
     result: QueryResult | None = None
+    analysis: AnalysisResult | None = None

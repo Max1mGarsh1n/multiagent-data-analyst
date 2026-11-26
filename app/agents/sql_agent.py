@@ -1,14 +1,19 @@
 import json
 import os
-from typing import Sequence
+from typing import Callable, Sequence
 
 from pydantic import BaseModel, Field
 
 from app.connectors.sql_guard import UnsafeSQLError
 from app.connectors.sql_runner import SQLExecutionError, execute_readonly_sql
+from app.contracts.analysis import AnalysisResult
 from app.contracts.chat import ChatResponse, QueryResult
 from app.llm.client import LLMError, LocalLLMClient
 from app.rag.retriever import retrieve_schema, source_schema_name, source_url
+
+AnalyzerFn = Callable[[str, QueryResult], AnalysisResult]
+
+_PREVIEW_ROW_LIMIT = 50
 
 
 class SQLPlan(BaseModel):
@@ -40,7 +45,7 @@ ANSWER_SYSTEM_PROMPT = """Ты — аналитик данных. Отвечай
 1. Опирайся ТОЛЬКО на вопрос пользователя, выполненный SQL и полученные строки результата.
 2. Не выдумывай числа, категории и выводы, которых нет в данных.
 3. Если вернулось 0 строк — прямо напиши, что по заданным условиям данных не найдено.
-4. Если результат обрезан (truncated=true), обязательно упомяни, что показаны первые строки выборки."""
+4. Если передано предупреждение context_warning (или preview_row_count < row_count, или truncated=true), явно укажи, сколько строк показано в превью и что итоги ограничены доступной выборкой."""
 
 
 def _format_history(history: Sequence[dict[str, str]] | None) -> list[dict[str, str]]:
@@ -50,16 +55,61 @@ def _format_history(history: Sequence[dict[str, str]] | None) -> list[dict[str, 
     return [dict(item) for item in history[-6:]]
 
 
+def _fallback_answer(result: QueryResult) -> str:
+    if result.row_count == 0:
+        return "Запрос выполнен. Строк по выбранным условиям не найдено."
+    suffix = " (результат ограничен лимитом сервера)" if result.truncated else ""
+    return f"Запрос выполнен, получено строк: {result.row_count}{suffix}."
+
+
+def _summarize_temporarily(question: str, result: QueryResult, client: LocalLLMClient) -> str:
+    """Temporary LLM summary fallback until the dedicated analytics module is plugged in."""
+    preview_rows = result.rows[:_PREVIEW_ROW_LIMIT]
+    preview_row_count = len(preview_rows)
+    warnings: list[str] = []
+    if result.row_count > preview_row_count:
+        warnings.append(
+            f"В контекст модели переданы только первые {preview_row_count} из {result.row_count} полученных строк; "
+            "ограничь вывод только видимой частью."
+        )
+    if result.truncated:
+        warnings.append("Выборка SQL обрезана лимитом строк сервера (truncated=true).")
+
+    summary_payload = {
+        "question": question,
+        "sql": result.sql,
+        "columns": result.columns,
+        "rows_preview": preview_rows,
+        "preview_row_count": preview_row_count,
+        "row_count": result.row_count,
+        "truncated": result.truncated,
+        "context_warning": " ".join(warnings) if warnings else None,
+        "elapsed_ms": result.elapsed_ms,
+    }
+    try:
+        answer_text = client.chat_text(
+            [
+                {"role": "system", "content": ANSWER_SYSTEM_PROMPT},
+                {"role": "user", "content": json.dumps(summary_payload, ensure_ascii=False)},
+            ],
+            temperature=0.1,
+        )
+    except LLMError:
+        return _fallback_answer(result)
+    return answer_text or _fallback_answer(result)
+
+
 def answer_question(
     question: str,
     source_id: str,
     *,
     history: Sequence[dict[str, str]] | None = None,
     llm_client: LocalLLMClient | None = None,
+    analyzer: AnalyzerFn | None = None,
     top_k: int | None = None,
     max_retries: int | None = None,
 ) -> ChatResponse:
-    """Run Schema-RAG -> SQL generation -> read-only execution (with self-correction) -> answer synthesis."""
+    """Run Schema-RAG -> SQL generation -> read-only execution (with self-correction) -> analysis."""
     effective_top_k = top_k if top_k is not None else int(os.getenv("RAG_TOP_K", "8"))
     retries = max_retries if max_retries is not None else int(os.getenv("SQL_MAX_RETRIES", "2"))
 
@@ -127,30 +177,27 @@ def answer_question(
             sql=candidate_sql,
         )
 
-    summary_payload = {
-        "question": question,
-        "sql": result.sql,
-        "columns": result.columns,
-        "rows_preview": result.rows[:50],
-        "row_count": result.row_count,
-        "truncated": result.truncated,
-        "elapsed_ms": result.elapsed_ms,
-    }
+    if analyzer is not None:
+        try:
+            analysis = analyzer(question, result)
+            return ChatResponse(
+                answer=analysis.summary,
+                sql=result.sql,
+                result=result,
+                analysis=analysis,
+            )
+        except Exception:
+            return ChatResponse(
+                answer=_fallback_answer(result),
+                sql=result.sql,
+                result=result,
+                analysis=None,
+            )
 
-    try:
-        answer_text = client.chat_text(
-            [
-                {"role": "system", "content": ANSWER_SYSTEM_PROMPT},
-                {"role": "user", "content": json.dumps(summary_payload, ensure_ascii=False)},
-            ],
-            temperature=0.1,
-            max_tokens=450,
-        )
-    except LLMError:
-        answer_text = f"Запрос выполнен, получено строк: {result.row_count}."
-
+    answer_text = _summarize_temporarily(question, result, client)
     return ChatResponse(
-        answer=answer_text or f"Запрос выполнен, получено строк: {result.row_count}.",
+        answer=answer_text,
         sql=result.sql,
         result=result,
+        analysis=None,
     )

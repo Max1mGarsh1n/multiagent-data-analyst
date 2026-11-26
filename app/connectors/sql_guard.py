@@ -64,7 +64,17 @@ def validate_readonly_sql(sql: str) -> str:
             raise UnsafeSQLError("Разрешён ровно один SQL-запрос.")
 
         stmt = statements[0]
-        allowed_roots = (exp.Select, exp.Union, exp.Subquery)
+        allowed_roots = tuple(
+            node
+            for node in (
+                exp.Select,
+                exp.Union,
+                getattr(exp, "Intersect", None),
+                getattr(exp, "Except", None),
+                exp.Subquery,
+            )
+            if node is not None
+        )
         if not isinstance(stmt, allowed_roots):
             raise UnsafeSQLError("Разрешены только SELECT-запросы (включая CTE WITH ... SELECT).")
 
