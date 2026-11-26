@@ -83,14 +83,14 @@ class TableDoc(BaseModel):
 
 class SchemaContext(BaseModel):
     source_id: str
-    retrieval_mode: Literal["full_schema"] = "full_schema"
+    retrieval_mode: Literal["full_schema", "semantic"] = "full_schema"
     top_k_applied: bool = False
     tables: list[TableDoc] = Field(default_factory=list)
     join_paths: list[str] = Field(default_factory=list)
 
     def to_prompt(self) -> str:
         """Describe the complete catalog as SQL-like text for the SQL agent."""
-        lines = ["-- Полный каталог схемы (v0). Отбор по вопросу и top_k пока не применяется."]
+        lines = ["-- Полный каталог схемы (v0). Отбор по вопросу и top_k пока не применяется." if self.retrieval_mode == "full_schema" else "-- Таблицы выбраны по смыслу вопроса; дополнительные таблицы могут быть добавлены для JOIN."]
         for table in self.tables:
             name = qualified_name(table.schema_name, table.name)
             lines.append("")
