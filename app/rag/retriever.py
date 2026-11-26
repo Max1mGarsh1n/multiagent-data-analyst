@@ -1,4 +1,5 @@
 import os
+from collections import deque
 
 from sqlalchemy import URL, make_url
 from sqlalchemy.exc import ArgumentError
@@ -39,14 +40,50 @@ def get_catalog(source_id: str, *, include_views: bool = False, include_profiles
 
 
 def retrieve_schema(question: str, source_id: str, top_k: int = 8, *, include_views: bool = False, include_profiles: bool = True) -> SchemaContext:
-    """Return the whole schema in v0; question and top_k do not filter tables yet."""
+    """Find top-k tables and add intermediate tables on foreign-key paths."""
     if not isinstance(question, str) or not question.strip():
         raise ValueError("Вопрос должен быть непустой строкой.")
     if type(top_k) is not int or top_k < 1:
         raise ValueError("top_k должен быть положительным целым числом.")
-    catalog = get_catalog(source_id, include_views=include_views, include_profiles=include_profiles)
+    if source_id != "demo":
+        raise ValueError("Неизвестный источник. В v1 доступен source_id='demo'.")
+    from app.rag.indexer import IndexError, search_catalog, source_fingerprint
+    selected, catalog = search_catalog(source_id, question, source_fingerprint(source_url(), os.getenv("SOURCE_SCHEMA", "bookings")), top_k, include_views=include_views)
+    if not include_views:
+        selected = [table for table in selected if table.kind == "table"]
+        catalog = [table for table in catalog if table.kind == "table"]
+    current_catalog = get_catalog(source_id, include_views=include_views, include_profiles=include_profiles)
+    metadata = [table.model_copy(update={"profile": None, "columns": [column.model_copy(update={"profile": None, "sample_values": []}) for column in table.columns]}) for table in current_catalog]
+    if [table.model_dump() for table in catalog] != [table.model_dump() for table in metadata]:
+        raise IndexError("Схема источника изменилась: выполни индексацию заново.")
+    by_name = {(t.schema_name, t.name): t for t in catalog}
+    adjacency = {key: set() for key in by_name}
+    for key, table in by_name.items():
+        for fk in table.foreign_keys:
+            target = (fk.referred_schema, fk.referred_table)
+            if target in by_name:
+                adjacency[key].add(target)
+                adjacency[target].add(key)
+    chosen = {(t.schema_name, t.name) for t in selected}
+    roots = sorted(chosen)
+    if roots:
+        connected = {roots[0]}
+        for target in roots[1:]:
+            queue = deque([(target, [target])])
+            seen = {target}
+            while queue:
+                node, path = queue.popleft()
+                if node in connected:
+                    chosen.update(path)
+                    connected.update(path)
+                    break
+                for neighbor in sorted(adjacency[node] - seen):
+                    seen.add(neighbor)
+                    queue.append((neighbor, path + [neighbor]))
     tables = []
-    for table in catalog:
+    for table in current_catalog:
+        if (table.schema_name, table.name) not in chosen:
+            continue
         columns = []
         for column in table.columns:
             profile = column.profile
@@ -58,9 +95,11 @@ def retrieve_schema(question: str, source_id: str, top_k: int = 8, *, include_vi
     for table in tables:
         source = qualified_name(table.schema_name, table.name)
         for foreign_key in table.foreign_keys:
+            if (foreign_key.referred_schema, foreign_key.referred_table) not in chosen:
+                continue
             target = qualified_name(foreign_key.referred_schema, foreign_key.referred_table)
             conditions = []
             for column, referred_column in zip(foreign_key.columns, foreign_key.referred_columns, strict=True):
                 conditions.append(f"{source}.{quote_identifier(column)} = {target}.{quote_identifier(referred_column)}")
             join_paths.append(" AND ".join(conditions))
-    return SchemaContext(source_id=source_id, tables=tables, join_paths=join_paths)
+    return SchemaContext(source_id=source_id, retrieval_mode="semantic", top_k_applied=True, tables=tables, join_paths=join_paths)
